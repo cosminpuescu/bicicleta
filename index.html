@@ -78,6 +78,7 @@ Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
   <div class="tile"><div class="lbl">Viteză</div><div class="val"><span id="vSpeed">–</span><span class="unit">km/h</span></div><div class="sub" id="sSpeed">medie –</div></div>
   <div class="tile"><div class="lbl">Cadență</div><div class="val"><span id="vCad">–</span><span class="unit">rpm</span></div><div class="sub" id="sCad">medie –</div></div>
   <div class="tile"><div class="lbl">Putere</div><div class="val"><span id="vPow">–</span><span class="unit">W</span></div><div class="sub" id="sPow">medie –</div></div>
+  <div class="tile"><div class="lbl">Ritm</div><div class="val"><span id="vPace">–</span><span class="unit">min/km</span></div><div class="sub" id="sPace">mediu –</div></div>
   <div class="tile"><div class="lbl">Distanță</div><div class="val"><span id="vDist">0.00</span><span class="unit">km</span></div></div>
   <div class="tile"><div class="lbl">Calorii</div><div class="val"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
   <div class="tile"><div class="lbl">Nivel</div><div class="val"><span id="vLvl">–</span></div></div>
@@ -329,6 +330,7 @@ $('resDown').onclick = () => changeRes(-1);
 
 // ---------- Sesiune ----------
 $('btnStart').onclick = async () => {
+  msg('');
   if (!session) {
     session = { start: Date.now(), pausedMs: 0, running: true, samples: [], dist: 0, kcal: 0, lastTick: Date.now(),
                 distBase: live.bikeDist, kcalBase: live.bikeKcal, pausedAt: null };
@@ -357,7 +359,7 @@ function elapsed() { if (!session) return 0; const end = session.running ? Date.
 function avg(k) { const v = session?.samples.map(x => x[k]).filter(x => x != null && x > 0) || []; return v.length ? v.reduce((a, b) => a + b) / v.length : null; }
 function summary() {
   return { date: new Date(session.start).toISOString(), secs: Math.round(elapsed()), km: session.dist / 1000,
-    kcal: Math.round(session.kcal), avgSpeed: avg('speed'), avgCad: avg('cad'), avgPow: avg('power'), avgHr: avg('hr') };
+    kcal: Math.round(session.kcal), avgSpeed: avg('speed'), avgCad: avg('cad'), avgPow: avg('power'), avgHr: avg('hr'), pace: avgPace(elapsed(), session.dist) };
 }
 
 setInterval(() => {
@@ -374,6 +376,10 @@ setInterval(() => {
 }, 1000);
 
 // ---------- Afișare ----------
+// ritm în min/km: 60 / viteză; sub 1 km/h nu are sens (ar ieși ore pe km)
+const fmtPace = minPerKm => minPerKm == null || !isFinite(minPerKm) || minPerKm > 60 ? '–'
+  : (t => Math.floor(t / 60) + ':' + String(t % 60).padStart(2, '0'))(Math.round(minPerKm * 60));
+const avgPace = (secs, meters) => meters > 50 ? secs / 60 / (meters / 1000) : null;
 const f0 = v => v == null ? '–' : Math.round(v), f1 = v => v == null ? '–' : v.toFixed(1);
 function render() {
   $('vSpeed').textContent = f1(live.speed); $('vCad').textContent = f0(live.cad);
@@ -382,6 +388,8 @@ function render() {
   $('vLvl').textContent = live.res ?? '–';
   $('timer').textContent = fmtTime(elapsed());
   $('vDist').textContent = ((session?.dist || 0) / 1000).toFixed(2);
+  $('vPace').textContent = live.speed >= 1 ? fmtPace(60 / live.speed) : '–';
+  $('sPace').textContent = 'mediu ' + fmtPace(avgPace(elapsed(), session?.dist || 0));
   $('vKcal').textContent = Math.round(session?.kcal || 0);
   $('sSpeed').textContent = 'medie ' + f1(avg('speed')); $('sCad').textContent = 'medie ' + f0(avg('cad'));
   $('sPow').textContent = 'medie ' + f0(avg('power'));
@@ -401,9 +409,9 @@ function renderHistory() {
   if (!h.length) { $('history').innerHTML = '<div class="msg">Încă nu ai antrenamente salvate.</div>'; return; }
   const tot = h.reduce((a, s) => ({ secs: a.secs + s.secs, km: a.km + s.km, kcal: a.kcal + s.kcal }), { secs: 0, km: 0, kcal: 0 });
   $('history').innerHTML = `<div class="msg" style="margin:0 0 8px">Total: ${h.length} antrenamente · ${fmtTime(tot.secs)} · ${tot.km.toFixed(1)} km · ${tot.kcal} kcal</div>
-  <table><tr><th>Data</th><th>Durată</th><th>km</th><th>kcal</th><th>W med.</th></tr>` +
+  <table><tr><th>Data</th><th>Durată</th><th>km</th><th>kcal</th><th>Ritm</th></tr>` +
   h.slice(0, 30).map(s => `<tr><td>${new Date(s.date).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' })}</td>
-    <td>${fmtTime(s.secs)}</td><td>${s.km.toFixed(2)}</td><td>${s.kcal}</td><td>${f0(s.avgPow)}</td></tr>`).join('') + '</table>';
+    <td>${fmtTime(s.secs)}</td><td>${s.km.toFixed(2)}</td><td>${s.kcal}</td><td>${fmtPace(s.pace ?? avgPace(s.secs, s.km * 1000))}</td></tr>`).join('') + '</table>';
 }
 renderHistory(); render();
 </script>
