@@ -104,8 +104,10 @@ Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
 </details>
 
 <script>
-const FTMS = 0x1826, BIKE_DATA = 0x2ad2, CONTROL = 0x2ad9, RES_RANGE = 0x2ad6;
-const CSC = 0x1816, CSC_MEAS = 0x2a5b, CPS = 0x1818, CPS_MEAS = 0x2a63, HRS = 0x180d, HR_MEAS = 0x2a37;
+// UUID-uri complete (128 biți): Bluefy pe iPhone nu acceptă forma scurtă numerică
+const U = n => '0000' + n.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb';
+const FTMS = U(0x1826), BIKE_DATA = U(0x2ad2), CONTROL = U(0x2ad9), RES_RANGE = U(0x2ad6);
+const CSC = U(0x1816), CSC_MEAS = U(0x2a5b), CPS = U(0x1818), CPS_MEAS = U(0x2a63), HRS = U(0x180d), HR_MEAS = U(0x2a37);
 const $ = id => document.getElementById(id);
 const store = {
   get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
@@ -165,8 +167,8 @@ async function connect() {
   log('Pas 4: conectat la', device.name || device.id);
   const svc = {};
   for (const uuid of [FTMS, CSC, CPS, HRS]) {
-    try { svc[uuid] = await server.getPrimaryService(uuid); log('  serviciu găsit: 0x' + uuid.toString(16)); }
-    catch { log('  lipsă: 0x' + uuid.toString(16)); }
+    try { svc[uuid] = await server.getPrimaryService(uuid); log('  serviciu găsit: 0x' + uuid.slice(4, 8)); }
+    catch { log('  lipsă: 0x' + uuid.slice(4, 8)); }
   }
   try { const all = await server.getPrimaryServices(); log('Toate serviciile:', all.map(s => s.uuid).join(', ')); } catch {}
   let ok = false;
