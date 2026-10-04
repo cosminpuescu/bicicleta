@@ -80,6 +80,7 @@ Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
   <div class="tile"><div class="lbl">Putere</div><div class="val"><span id="vPow">–</span><span class="unit">W</span></div><div class="sub" id="sPow">medie –</div></div>
   <div class="tile"><div class="lbl">Distanță</div><div class="val"><span id="vDist">0.00</span><span class="unit">km</span></div></div>
   <div class="tile"><div class="lbl">Calorii</div><div class="val"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
+  <div class="tile"><div class="lbl">Nivel</div><div class="val"><span id="vLvl">–</span></div></div>
   <div class="tile"><div class="lbl">Puls</div><div class="val"><span id="vHr">–</span><span class="unit">bpm</span></div></div>
 </div>
 
@@ -107,6 +108,8 @@ Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
 // UUID-uri complete (128 biți): Bluefy pe iPhone nu acceptă forma scurtă numerică
 const U = n => '0000' + n.toString(16).padStart(4, '0') + '-0000-1000-8000-00805f9b34fb';
 const FTMS = U(0x1826), BIKE_DATA = U(0x2ad2), CONTROL = U(0x2ad9), RES_RANGE = U(0x2ad6);
+// Protocol propriu MBH/Jawofit: serviciu FFE0, caracteristica FFE1
+const MBH = U(0xffe0), MBH_DATA = U(0xffe1);
 const CSC = U(0x1816), CSC_MEAS = U(0x2a5b), CPS = U(0x1818), CPS_MEAS = U(0x2a63), HRS = U(0x180d), HR_MEAS = U(0x2a37);
 const $ = id => document.getElementById(id);
 const store = {
@@ -140,8 +143,8 @@ log('Web Bluetooth:', navigator.bluetooth ? 'da' : 'NU');
 async function pickAndConnect(all) {
   if (device?.gatt?.connected) { device.gatt.disconnect(); return; }
   const opts = all
-    ? { acceptAllDevices: true, optionalServices: [FTMS, CSC, CPS, HRS] }
-    : { filters: [{ services: [FTMS] }, { services: [CSC] }, { services: [CPS] }], optionalServices: [FTMS, CSC, CPS, HRS] };
+    ? { acceptAllDevices: true, optionalServices: [MBH, FTMS, CSC, CPS, HRS] }
+    : { filters: [{ namePrefix: 'MBH' }, { services: [MBH] }, { services: [FTMS] }, { services: [CSC] }, { services: [CPS] }], optionalServices: [MBH, FTMS, CSC, CPS, HRS] };
   try {
     setStatus('Caut…', 'busy');
     log('Pas 1: caut dispozitive (' + (all ? 'toate' : 'doar aparate fitness') + ')');
@@ -166,15 +169,21 @@ async function connect() {
   const server = await device.gatt.connect();
   log('Pas 4: conectat la', device.name || device.id);
   const svc = {};
-  for (const uuid of [FTMS, CSC, CPS, HRS]) {
+  for (const uuid of [MBH, FTMS, CSC, CPS, HRS]) {
     try { svc[uuid] = await server.getPrimaryService(uuid); log('  serviciu găsit: 0x' + uuid.slice(4, 8)); }
     catch { log('  lipsă: 0x' + uuid.slice(4, 8)); }
   }
   try { const all = await server.getPrimaryServices(); log('Toate serviciile:', all.map(s => s.uuid).join(', ')); } catch {}
   let ok = false;
 
+  const mbh = svc[MBH];
+  if (mbh) {
+    const c = await mbh.getCharacteristic(MBH_DATA).catch(() => null);
+    if (c) { c.addEventListener('characteristicvaluechanged', e => parseMbh(e.target.value)); await c.startNotifications(); ok = true; log('MBH FFE1: activ'); }
+  }
+
   const ftms = svc[FTMS];
-  if (ftms) {
+  if (ftms && !ok) {
     const c = await ftms.getCharacteristic(BIKE_DATA).catch(() => null);
     if (c) { c.addEventListener('characteristicvaluechanged', e => parseBikeData(e.target.value)); await c.startNotifications(); ok = true; log('FTMS Indoor Bike Data: activ'); }
     setupControl(ftms); // în fundal, ca să nu întârzie afișarea datelor
@@ -251,6 +260,31 @@ function parseCsc(dv) {
   }
   cscPrev = { wheel, crank }; render();
 }
+// Cadru MBH (18 octeți): AA 30 80 00 01 11 | viteză u16 (0,01 km/h) | timp u16 (s) |
+// distanță u16 (×10 m) | calorii u16 (kcal) | nivel u8 | 00 | sumă de control | 55
+let mbhBuf = [];
+function parseMbh(dv) {
+  for (let i = 0; i < dv.byteLength; i++) mbhBuf.push(dv.getUint8(i));
+  for (;;) {
+    const st = mbhBuf.indexOf(0xaa);
+    if (st < 0) { mbhBuf = []; return; }
+    if (st > 0) mbhBuf = mbhBuf.slice(st);
+    if (mbhBuf.length < 18) return;
+    const f = mbhBuf.slice(0, 18);
+    const sum = f.slice(1, 16).reduce((a, b) => a + b, 0) & 0xff;
+    if (f[17] !== 0x55 || f[16] !== sum) { mbhBuf.shift(); continue; }
+    mbhBuf = mbhBuf.slice(18);
+    if (f[1] !== 0x30) { log('Cadru MBH necunoscut:', f.map(b => b.toString(16).padStart(2, '0')).join(' ')); continue; }
+    const u16 = i => (f[i] << 8) | f[i + 1];
+    live.speed = u16(6) / 100;
+    live.bikeDist = u16(10) * 10;
+    live.bikeKcal = u16(12);
+    live.res = f[14];
+    if (!live.mbhSeen) { live.mbhSeen = true; ['vCad', 'vPow'].forEach(id => $(id).closest('.tile').classList.add('hidden')); log('Primul cadru MBH:', f.map(b => b.toString(16).padStart(2, '0')).join(' ')); }
+    render();
+  }
+}
+
 function parseCps(dv) { live.power = dv.getInt16(2, true); render(); }
 function parseHr(dv) { const f = dv.getUint8(0); live.hr = f & 1 ? dv.getUint16(1, true) : dv.getUint8(1); render(); }
 
@@ -345,6 +379,7 @@ function render() {
   $('vSpeed').textContent = f1(live.speed); $('vCad').textContent = f0(live.cad);
   $('vPow').textContent = f0(live.power); $('vHr').textContent = f0(live.hr);
   if (live.res != null && targetRes == null) $('vRes').textContent = live.res;
+  $('vLvl').textContent = live.res ?? '–';
   $('timer').textContent = fmtTime(elapsed());
   $('vDist').textContent = ((session?.dist || 0) / 1000).toFixed(2);
   $('vKcal').textContent = Math.round(session?.kcal || 0);
