@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1115">
+<title>Bicicleta mea</title>
+<style>
+  :root {
+    --bg: #0f1115; --card: #1a1d24; --line: #2a2f3a; --text: #eef1f6; --muted: #8b93a3;
+    --accent: #3ddc84; --warn: #ffb020; --err: #ff5c5c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  body { padding: max(16px, env(safe-area-inset-top)) 16px 32px; max-width: 720px; margin: 0 auto; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+  h1 { font-size: 20px; margin: 0; }
+  .status { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.on { background: var(--accent); } .dot.busy { background: var(--warn); }
+  button { font: inherit; border: 0; border-radius: 12px; padding: 14px 16px; font-weight: 600;
+    background: var(--card); color: var(--text); border: 1px solid var(--line); cursor: pointer; }
+  button.primary { background: var(--accent); color: #062b14; border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > button { flex: 1 1 140px; }
+  .timer { text-align: center; font-size: 64px; font-weight: 700; font-variant-numeric: tabular-nums;
+    margin: 18px 0 10px; letter-spacing: 1px; }
+  .grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; margin: 14px 0; }
+  @media (min-width: 560px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  .tile { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 12px 14px; }
+  .tile .lbl { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; }
+  .tile .val { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .tile .unit { font-size: 14px; color: var(--muted); font-weight: 500; margin-left: 4px; }
+  .tile .sub { font-size: 12px; color: var(--muted); }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 14px; margin: 14px 0; }
+  .card h2 { font-size: 15px; margin: 0 0 10px; }
+  .res { display: flex; align-items: center; gap: 12px; }
+  .res button { width: 56px; padding: 12px 0; font-size: 22px; }
+  .res .v { flex: 1; text-align: center; font-size: 28px; font-weight: 700; }
+  .msg { font-size: 13px; color: var(--muted); margin-top: 8px; white-space: pre-wrap; }
+  .msg.err { color: var(--err); }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 7px 4px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  canvas { width: 100%; height: 90px; display: block; }
+  .hidden { display: none; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  pre { font-size: 11px; color: var(--muted); white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🚴 Bicicleta mea</h1>
+  <div class="status"><span class="dot" id="dot"></span><span id="statusTxt">Neconectat</span></div>
+</header>
+
+<div id="unsupported" class="card hidden">
+  <h2>Browserul nu suportă Bluetooth</h2>
+  <div class="msg">Pe iPhone, Safari și Chrome nu au Web Bluetooth. Instalează aplicația gratuită <b>Bluefy – Web BLE Browser</b> din App Store și deschide pagina din ea.
+Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
+</div>
+
+<div class="row">
+  <button class="primary" id="btnConnect">Conectează bicicleta</button>
+  <button id="btnStart" disabled>Start</button>
+  <button id="btnStop" disabled>Stop &amp; salvează</button>
+</div>
+<div class="msg" id="msg">Închide aplicația MBHCLUB înainte – bicicleta acceptă o singură conexiune.</div>
+
+<div class="timer" id="timer">00:00</div>
+
+<canvas id="chart" width="700" height="90"></canvas>
+
+<div class="grid">
+  <div class="tile"><div class="lbl">Viteză</div><div class="val"><span id="vSpeed">–</span><span class="unit">km/h</span></div><div class="sub" id="sSpeed">medie –</div></div>
+  <div class="tile"><div class="lbl">Cadență</div><div class="val"><span id="vCad">–</span><span class="unit">rpm</span></div><div class="sub" id="sCad">medie –</div></div>
+  <div class="tile"><div class="lbl">Putere</div><div class="val"><span id="vPow">–</span><span class="unit">W</span></div><div class="sub" id="sPow">medie –</div></div>
+  <div class="tile"><div class="lbl">Distanță</div><div class="val"><span id="vDist">0.00</span><span class="unit">km</span></div></div>
+  <div class="tile"><div class="lbl">Calorii</div><div class="val"><span id="vKcal">0</span><span class="unit">kcal</span></div></div>
+  <div class="tile"><div class="lbl">Puls</div><div class="val"><span id="vHr">–</span><span class="unit">bpm</span></div></div>
+</div>
+
+<div class="card hidden" id="resCard">
+  <h2>Rezistență</h2>
+  <div class="res">
+    <button id="resDown">−</button>
+    <div class="v" id="vRes">–</div>
+    <button id="resUp">+</button>
+  </div>
+  <div class="msg" id="resMsg"></div>
+</div>
+
+<div class="card">
+  <h2>Antrenamentele mele</h2>
+  <div id="history"></div>
+</div>
+
+<details class="card">
+  <summary>Detalii tehnice (pentru depanare)</summary>
+  <pre id="log"></pre>
+</details>
+
+<script>
+const FTMS = 0x1826, BIKE_DATA = 0x2ad2, CONTROL = 0x2ad9, RES_RANGE = 0x2ad6;
+const CSC = 0x1816, CSC_MEAS = 0x2a5b, CPS = 0x1818, CPS_MEAS = 0x2a63, HRS = 0x180d, HR_MEAS = 0x2a37;
+const $ = id => document.getElementById(id);
+const store = {
+  get(k, d) { try { return JSON.parse(localStorage.getItem(k)) ?? d; } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} }
+};
+
+let device = null, controlChar = null, resRange = null, wakeLock = null;
+let live = { speed: null, cad: null, power: null, hr: null, res: null, bikeDist: null, bikeKcal: null };
+let session = null; // { start, pausedMs, running, samples, dist, kcal, lastTick, distBase, kcalBase }
+
+function log(...a) { const s = a.join(' '); console.log(s); $('log').textContent += s + '\n'; }
+function setStatus(txt, cls) { $('statusTxt').textContent = txt; $('dot').className = 'dot ' + (cls || ''); }
+function msg(t, err) { $('msg').textContent = t; $('msg').className = 'msg' + (err ? ' err' : ''); }
+function fmtTime(s) { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
+  return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(x).padStart(2, '0'); }
+
+if (!navigator.bluetooth) { $('unsupported').classList.remove('hidden'); $('btnConnect').disabled = true; }
+
+// ---------- Conectare ----------
+$('btnConnect').onclick = async () => {
+  if (device?.gatt?.connected) { device.gatt.disconnect(); return; }
+  try {
+    setStatus('Caut…', 'busy');
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [FTMS, CSC, CPS, HRS]
+    });
+    device.addEventListener('gattserverdisconnected', onDisconnect);
+    await connect();
+  } catch (e) {
+    setStatus('Neconectat'); log('Eroare:', e.message);
+    if (e.name !== 'NotFoundError') msg('Nu m-am putut conecta: ' + e.message, true);
+  }
+};
+
+async function connect() {
+  setStatus('Conectez…', 'busy');
+  const server = await device.gatt.connect();
+  log('Conectat la', device.name || device.id);
+  const services = await server.getPrimaryServices().catch(() => []);
+  log('Servicii:', services.map(s => s.uuid).join(', ') || '(niciunul accesibil)');
+  let ok = false;
+
+  const ftms = services.find(s => s.uuid.startsWith('00001826'));
+  if (ftms) {
+    const c = await ftms.getCharacteristic(BIKE_DATA).catch(() => null);
+    if (c) { c.addEventListener('characteristicvaluechanged', e => parseBikeData(e.target.value)); await c.startNotifications(); ok = true; log('FTMS Indoor Bike Data: activ'); }
+    await setupControl(ftms);
+  }
+  const csc = services.find(s => s.uuid.startsWith('00001816'));
+  if (csc && !ok) {
+    const c = await csc.getCharacteristic(CSC_MEAS).catch(() => null);
+    if (c) { c.addEventListener('characteristicvaluechanged', e => parseCsc(e.target.value)); await c.startNotifications(); ok = true; log('CSC: activ'); }
+  }
+  const cps = services.find(s => s.uuid.startsWith('00001818'));
+  if (cps) {
+    const c = await cps.getCharacteristic(CPS_MEAS).catch(() => null);
+    if (c) { c.addEventListener('characteristicvaluechanged', e => parseCps(e.target.value)); await c.startNotifications(); ok = true; log('Cycling Power: activ'); }
+  }
+  const hrs = services.find(s => s.uuid.startsWith('0000180d'));
+  if (hrs) {
+    const c = await hrs.getCharacteristic(HR_MEAS).catch(() => null);
+    if (c) { c.addEventListener('characteristicvaluechanged', e => parseHr(e.target.value)); await c.startNotifications(); log('Puls: activ'); }
+  }
+
+  if (!ok) {
+    msg('Bicicleta s-a conectat, dar nu trimite date într-un format standard (FTMS). Deschide „Detalii tehnice” și trimite-mi lista de acolo.', true);
+    setStatus('Conectat (fără date)', 'busy');
+  } else {
+    setStatus((device.name || 'Bicicleta') + ' conectată', 'on');
+    msg('Gata! Apasă Start și pedalează.');
+    $('btnStart').disabled = false;
+  }
+  $('btnConnect').textContent = 'Deconectează';
+}
+
+function onDisconnect() {
+  setStatus('Deconectat'); $('btnConnect').textContent = 'Conectează bicicleta';
+  controlChar = null; $('resCard').classList.add('hidden');
+  live.speed = live.cad = live.power = null;
+  if (session?.running) { msg('Conexiunea s-a pierdut – încerc să reconectez…', true); reconnect(1); }
+}
+async function reconnect(n) {
+  if (n > 5 || !device) return msg('Nu am putut reconecta. Apasă „Conectează bicicleta”.', true);
+  try { await connect(); } catch { setTimeout(() => reconnect(n + 1), 2000 * n); }
+}
+
+// ---------- Parsare date ----------
+function parseBikeData(dv) {
+  const f = dv.getUint16(0, true); let o = 2;
+  const u8 = () => dv.getUint8(o++), u16 = () => { const v = dv.getUint16(o, true); o += 2; return v; },
+        s16 = () => { const v = dv.getInt16(o, true); o += 2; return v; },
+        u24 = () => { const v = dv.getUint16(o, true) | (dv.getUint8(o + 2) << 16); o += 3; return v; };
+  try {
+    if (!(f & 1)) live.speed = u16() / 100;
+    if (f & 1 << 1) u16();
+    if (f & 1 << 2) live.cad = u16() / 2;
+    if (f & 1 << 3) u16();
+    if (f & 1 << 4) live.bikeDist = u24();
+    if (f & 1 << 5) live.res = s16();
+    if (f & 1 << 6) live.power = s16();
+    if (f & 1 << 7) s16();
+    if (f & 1 << 8) { live.bikeKcal = u16(); u16(); u8(); }
+    if (f & 1 << 9) { const hr = u8(); if (hr) live.hr = hr; }
+  } catch (e) { /* pachet scurt – ignorăm restul */ }
+  render();
+}
+
+let cscPrev = null;
+function parseCsc(dv) {
+  const f = dv.getUint8(0); let o = 1, wheel = null, crank = null;
+  if (f & 1) { wheel = { rev: dv.getUint32(o, true), t: dv.getUint16(o + 4, true) }; o += 6; }
+  if (f & 2) { crank = { rev: dv.getUint16(o, true), t: dv.getUint16(o + 2, true) }; }
+  if (cscPrev) {
+    if (wheel && cscPrev.wheel) { const dt = ((wheel.t - cscPrev.wheel.t) & 0xffff) / 1024, dr = wheel.rev - cscPrev.wheel.rev;
+      if (dt > 0) live.speed = dr * 2.105 / dt * 3.6; }
+    if (crank && cscPrev.crank) { const dt = ((crank.t - cscPrev.crank.t) & 0xffff) / 1024, dr = (crank.rev - cscPrev.crank.rev) & 0xffff;
+      if (dt > 0) live.cad = dr / dt * 60; else if (dr === 0) live.cad = 0; }
+  }
+  cscPrev = { wheel, crank }; render();
+}
+function parseCps(dv) { live.power = dv.getInt16(2, true); render(); }
+function parseHr(dv) { const f = dv.getUint8(0); live.hr = f & 1 ? dv.getUint16(1, true) : dv.getUint8(1); render(); }
+
+// ---------- Rezistență (FTMS Control Point) ----------
+let cpResolve = null;
+async function setupControl(ftms) {
+  try {
+    controlChar = await ftms.getCharacteristic(CONTROL);
+    controlChar.addEventListener('characteristicvaluechanged', e => {
+      const v = e.target.value; if (v.getUint8(0) === 0x80 && cpResolve) { cpResolve(v.getUint8(2)); cpResolve = null; }
+    });
+    await controlChar.startNotifications();
+    try { const r = await (await ftms.getCharacteristic(RES_RANGE)).readValue();
+      resRange = { min: r.getInt16(0, true) / 10, max: r.getInt16(2, true) / 10, step: r.getUint16(4, true) / 10 || 1 };
+      log('Interval rezistență:', JSON.stringify(resRange)); } catch {}
+    const res = await cpWrite([0x00]);
+    log('Cerere control:', res);
+    if (res === 1) $('resCard').classList.remove('hidden');
+  } catch (e) { controlChar = null; log('Fără control rezistență:', e.message); }
+}
+function cpWrite(bytes) {
+  return new Promise(async res => {
+    cpResolve = res; setTimeout(() => { if (cpResolve === res) { cpResolve = null; res(-1); } }, 3000);
+    try { await controlChar.writeValueWithResponse(new Uint8Array(bytes)); } catch (e) { log('Scriere eșuată:', e.message); cpResolve = null; res(-1); }
+  });
+}
+let targetRes = null;
+async function changeRes(dir) {
+  if (!controlChar) return;
+  const step = resRange?.step || 1, min = resRange?.min ?? 1, max = resRange?.max ?? 32;
+  const cur = targetRes ?? (live.res != null ? live.res : min);
+  targetRes = Math.min(max, Math.max(min, cur + dir * step));
+  const raw = Math.round(targetRes * 10);
+  let r = await cpWrite([0x04, raw & 0xff, (raw >> 8) & 0xff]);   // sint16, rezoluție 0.1
+  if (r !== 1) r = await cpWrite([0x04, Math.min(255, raw)]);      // varianta veche uint8
+  if (r !== 1) r = await cpWrite([0x04, Math.round(targetRes)]);   // unele biciclete: nivel direct
+  $('resMsg').textContent = r === 1 ? '' : 'Bicicleta nu a acceptat comanda (cod ' + r + ').';
+  $('vRes').textContent = targetRes;
+}
+$('resUp').onclick = () => changeRes(1);
+$('resDown').onclick = () => changeRes(-1);
+
+// ---------- Sesiune ----------
+$('btnStart').onclick = async () => {
+  if (!session) {
+    session = { start: Date.now(), pausedMs: 0, running: true, samples: [], dist: 0, kcal: 0, lastTick: Date.now(),
+                distBase: live.bikeDist, kcalBase: live.bikeKcal, pausedAt: null };
+  } else if (session.running) {
+    session.running = false; session.pausedAt = Date.now();
+  } else {
+    session.pausedMs += Date.now() - session.pausedAt; session.running = true; session.lastTick = Date.now();
+  }
+  $('btnStart').textContent = session.running ? 'Pauză' : 'Continuă';
+  $('btnStop').disabled = false;
+  try { if (session.running && 'wakeLock' in navigator) wakeLock = await navigator.wakeLock.request('screen'); } catch {}
+};
+
+$('btnStop').onclick = () => {
+  if (!session) return;
+  const s = summary();
+  if (s.secs > 30) { const h = store.get('istoric', []); h.unshift(s); store.set('istoric', h.slice(0, 200)); }
+  session = null; $('btnStart').textContent = 'Start'; $('btnStop').disabled = true;
+  try { wakeLock?.release(); } catch {}
+  msg(s.secs > 30 ? `Salvat: ${fmtTime(s.secs)}, ${s.km.toFixed(2)} km, ${s.kcal} kcal.` : 'Sesiune prea scurtă – nu am salvat-o.');
+  renderHistory(); render();
+};
+
+function elapsed() { if (!session) return 0; const end = session.running ? Date.now() : session.pausedAt;
+  return (end - session.start - session.pausedMs) / 1000; }
+function avg(k) { const v = session?.samples.map(x => x[k]).filter(x => x != null && x > 0) || []; return v.length ? v.reduce((a, b) => a + b) / v.length : null; }
+function summary() {
+  return { date: new Date(session.start).toISOString(), secs: Math.round(elapsed()), km: session.dist / 1000,
+    kcal: Math.round(session.kcal), avgSpeed: avg('speed'), avgCad: avg('cad'), avgPow: avg('power'), avgHr: avg('hr') };
+}
+
+setInterval(() => {
+  if (!session?.running) return;
+  const now = Date.now(), dt = (now - session.lastTick) / 1000; session.lastTick = now;
+  // distanță: din bicicletă dacă o raportează, altfel integrăm viteza
+  if (live.bikeDist != null && session.distBase != null && live.bikeDist >= session.distBase) session.dist = live.bikeDist - session.distBase;
+  else { if (live.bikeDist != null && session.distBase == null) session.distBase = live.bikeDist; session.dist += (live.speed || 0) / 3.6 * dt; }
+  // calorii: din bicicletă, altfel estimare din putere (≈ 1 kcal la 1 kJ de lucru mecanic)
+  if (live.bikeKcal != null && session.kcalBase != null && live.bikeKcal >= session.kcalBase) session.kcal = live.bikeKcal - session.kcalBase;
+  else { if (live.bikeKcal != null && session.kcalBase == null) session.kcalBase = live.bikeKcal; session.kcal += (live.power || 0) * dt / 1000; }
+  session.samples.push({ t: elapsed(), speed: live.speed, cad: live.cad, power: live.power, hr: live.hr });
+  render();
+}, 1000);
+
+// ---------- Afișare ----------
+const f0 = v => v == null ? '–' : Math.round(v), f1 = v => v == null ? '–' : v.toFixed(1);
+function render() {
+  $('vSpeed').textContent = f1(live.speed); $('vCad').textContent = f0(live.cad);
+  $('vPow').textContent = f0(live.power); $('vHr').textContent = f0(live.hr);
+  if (live.res != null && targetRes == null) $('vRes').textContent = live.res;
+  $('timer').textContent = fmtTime(elapsed());
+  $('vDist').textContent = ((session?.dist || 0) / 1000).toFixed(2);
+  $('vKcal').textContent = Math.round(session?.kcal || 0);
+  $('sSpeed').textContent = 'medie ' + f1(avg('speed')); $('sCad').textContent = 'medie ' + f0(avg('cad'));
+  $('sPow').textContent = 'medie ' + f0(avg('power'));
+  drawChart();
+}
+function drawChart() {
+  const c = $('chart'), g = c.getContext('2d'), W = c.width, H = c.height; g.clearRect(0, 0, W, H);
+  const pts = (session?.samples || []).slice(-300); if (pts.length < 2) return;
+  const key = pts.some(p => p.power > 0) ? 'power' : 'speed';
+  const max = Math.max(1, ...pts.map(p => p[key] || 0)) * 1.1;
+  g.strokeStyle = '#3ddc84'; g.lineWidth = 2; g.beginPath();
+  pts.forEach((p, i) => { const x = i / (pts.length - 1) * W, y = H - (p[key] || 0) / max * (H - 4) - 2; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+  g.stroke(); g.fillStyle = '#8b93a3'; g.font = '12px sans-serif'; g.fillText(key === 'power' ? 'Putere (W)' : 'Viteză (km/h)', 4, 12);
+}
+function renderHistory() {
+  const h = store.get('istoric', []);
+  if (!h.length) { $('history').innerHTML = '<div class="msg">Încă nu ai antrenamente salvate.</div>'; return; }
+  const tot = h.reduce((a, s) => ({ secs: a.secs + s.secs, km: a.km + s.km, kcal: a.kcal + s.kcal }), { secs: 0, km: 0, kcal: 0 });
+  $('history').innerHTML = `<div class="msg" style="margin:0 0 8px">Total: ${h.length} antrenamente · ${fmtTime(tot.secs)} · ${tot.km.toFixed(1)} km · ${tot.kcal} kcal</div>
+  <table><tr><th>Data</th><th>Durată</th><th>km</th><th>kcal</th><th>W med.</th></tr>` +
+  h.slice(0, 30).map(s => `<tr><td>${new Date(s.date).toLocaleDateString('ro-RO', { day: '2-digit', month: 'short' })}</td>
+    <td>${fmtTime(s.secs)}</td><td>${s.km.toFixed(2)}</td><td>${s.kcal}</td><td>${f0(s.avgPow)}</td></tr>`).join('') + '</table>';
+}
+renderHistory(); render();
+</script>
+</body>
+</html>
