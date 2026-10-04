@@ -64,6 +64,7 @@ Pe Android sau pe calculator, folosește Chrome sau Edge.</div>
 
 <div class="row">
   <button class="primary" id="btnConnect">Conectează bicicleta</button>
+  <button id="btnConnectAll">Caută toate dispozitivele</button>
   <button id="btnStart" disabled>Start</button>
   <button id="btnStop" disabled>Stop &amp; salvează</button>
 </div>
@@ -121,50 +122,72 @@ function msg(t, err) { $('msg').textContent = t; $('msg').className = 'msg' + (e
 function fmtTime(s) { s = Math.floor(s); const h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, x = s % 60;
   return (h ? h + ':' + String(m).padStart(2, '0') : String(m).padStart(2, '0')) + ':' + String(x).padStart(2, '0'); }
 
-if (!navigator.bluetooth) { $('unsupported').classList.remove('hidden'); $('btnConnect').disabled = true; }
+if (!navigator.bluetooth) { $('unsupported').classList.remove('hidden'); $('btnConnect').disabled = true; $('btnConnectAll').disabled = true; }
 
 // ---------- Conectare ----------
-$('btnConnect').onclick = async () => {
+function errText(e) {
+  if (e == null) return 'necunoscută';
+  if (typeof e === 'string') return e;
+  const t = [e.name, e.message].filter(Boolean).join(': ');
+  if (t) return t;
+  try { return JSON.stringify(e) || String(e); } catch { return String(e); }
+}
+log('Browser:', navigator.userAgent);
+log('Web Bluetooth:', navigator.bluetooth ? 'da' : 'NU');
+
+async function pickAndConnect(all) {
   if (device?.gatt?.connected) { device.gatt.disconnect(); return; }
+  const opts = all
+    ? { acceptAllDevices: true, optionalServices: [FTMS, CSC, CPS, HRS] }
+    : { filters: [{ services: [FTMS] }, { services: [CSC] }, { services: [CPS] }], optionalServices: [FTMS, CSC, CPS, HRS] };
   try {
     setStatus('Caut…', 'busy');
-    device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [FTMS, CSC, CPS, HRS]
-    });
+    log('Pas 1: caut dispozitive (' + (all ? 'toate' : 'doar aparate fitness') + ')');
+    device = await navigator.bluetooth.requestDevice(opts);
+    log('Pas 2: ales', device.name || '(fără nume)', device.id);
     device.addEventListener('gattserverdisconnected', onDisconnect);
     await connect();
   } catch (e) {
-    setStatus('Neconectat'); log('Eroare:', e.message);
-    if (e.name !== 'NotFoundError') msg('Nu m-am putut conecta: ' + e.message, true);
+    setStatus('Neconectat'); log('Eroare:', errText(e));
+    const t = errText(e);
+    if (/cancel|NotFound|anulat/i.test(t)) msg(all ? 'Nu ai ales niciun dispozitiv.' :
+      'Nu am găsit bicicleta ca aparat de fitness standard. Apasă „Caută toate dispozitivele” și alege-o din listă.', !all);
+    else msg('Nu m-am putut conecta: ' + t, true);
   }
-};
+}
+$('btnConnect').onclick = () => pickAndConnect(false);
+$('btnConnectAll').onclick = () => pickAndConnect(true);
 
 async function connect() {
   setStatus('Conectez…', 'busy');
+  log('Pas 3: conectare GATT…');
   const server = await device.gatt.connect();
-  log('Conectat la', device.name || device.id);
-  const services = await server.getPrimaryServices().catch(() => []);
-  log('Servicii:', services.map(s => s.uuid).join(', ') || '(niciunul accesibil)');
+  log('Pas 4: conectat la', device.name || device.id);
+  const svc = {};
+  for (const uuid of [FTMS, CSC, CPS, HRS]) {
+    try { svc[uuid] = await server.getPrimaryService(uuid); log('  serviciu găsit: 0x' + uuid.toString(16)); }
+    catch { log('  lipsă: 0x' + uuid.toString(16)); }
+  }
+  try { const all = await server.getPrimaryServices(); log('Toate serviciile:', all.map(s => s.uuid).join(', ')); } catch {}
   let ok = false;
 
-  const ftms = services.find(s => s.uuid.startsWith('00001826'));
+  const ftms = svc[FTMS];
   if (ftms) {
     const c = await ftms.getCharacteristic(BIKE_DATA).catch(() => null);
     if (c) { c.addEventListener('characteristicvaluechanged', e => parseBikeData(e.target.value)); await c.startNotifications(); ok = true; log('FTMS Indoor Bike Data: activ'); }
-    await setupControl(ftms);
+    setupControl(ftms); // în fundal, ca să nu întârzie afișarea datelor
   }
-  const csc = services.find(s => s.uuid.startsWith('00001816'));
+  const csc = svc[CSC];
   if (csc && !ok) {
     const c = await csc.getCharacteristic(CSC_MEAS).catch(() => null);
     if (c) { c.addEventListener('characteristicvaluechanged', e => parseCsc(e.target.value)); await c.startNotifications(); ok = true; log('CSC: activ'); }
   }
-  const cps = services.find(s => s.uuid.startsWith('00001818'));
+  const cps = svc[CPS];
   if (cps) {
     const c = await cps.getCharacteristic(CPS_MEAS).catch(() => null);
     if (c) { c.addEventListener('characteristicvaluechanged', e => parseCps(e.target.value)); await c.startNotifications(); ok = true; log('Cycling Power: activ'); }
   }
-  const hrs = services.find(s => s.uuid.startsWith('0000180d'));
+  const hrs = svc[HRS];
   if (hrs) {
     const c = await hrs.getCharacteristic(HR_MEAS).catch(() => null);
     if (c) { c.addEventListener('characteristicvaluechanged', e => parseHr(e.target.value)); await c.startNotifications(); log('Puls: activ'); }
@@ -178,11 +201,11 @@ async function connect() {
     msg('Gata! Apasă Start și pedalează.');
     $('btnStart').disabled = false;
   }
-  $('btnConnect').textContent = 'Deconectează';
+  $('btnConnect').textContent = 'Deconectează'; $('btnConnectAll').classList.add('hidden');
 }
 
 function onDisconnect() {
-  setStatus('Deconectat'); $('btnConnect').textContent = 'Conectează bicicleta';
+  setStatus('Deconectat'); $('btnConnect').textContent = 'Conectează bicicleta'; $('btnConnectAll').classList.remove('hidden');
   controlChar = null; $('resCard').classList.add('hidden');
   live.speed = live.cad = live.power = null;
   if (session?.running) { msg('Conexiunea s-a pierdut – încerc să reconectez…', true); reconnect(1); }
@@ -244,12 +267,12 @@ async function setupControl(ftms) {
     const res = await cpWrite([0x00]);
     log('Cerere control:', res);
     if (res === 1) $('resCard').classList.remove('hidden');
-  } catch (e) { controlChar = null; log('Fără control rezistență:', e.message); }
+  } catch (e) { controlChar = null; log('Fără control rezistență:', errText(e)); }
 }
 function cpWrite(bytes) {
   return new Promise(async res => {
     cpResolve = res; setTimeout(() => { if (cpResolve === res) { cpResolve = null; res(-1); } }, 3000);
-    try { await controlChar.writeValueWithResponse(new Uint8Array(bytes)); } catch (e) { log('Scriere eșuată:', e.message); cpResolve = null; res(-1); }
+    try { const b = new Uint8Array(bytes); await (controlChar.writeValueWithResponse ? controlChar.writeValueWithResponse(b) : controlChar.writeValue(b)); } catch (e) { log('Scriere eșuată:', errText(e)); cpResolve = null; res(-1); }
   });
 }
 let targetRes = null;
